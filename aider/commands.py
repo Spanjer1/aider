@@ -163,6 +163,10 @@ class Commands:
                     "context",
                     "Automatically identify which files will need to be edited.",
                 ),
+                (
+                    "refine",
+                    "Create structured documents based on well-defined question-answer cycles.",
+                ),
             ]
         )
 
@@ -189,7 +193,7 @@ class Commands:
         if ef == "code":
             edit_format = self.coder.main_model.edit_format
             summarize_from_coder = False
-        elif ef == "ask":
+        elif ef == "ask" or ef == "refine":
             summarize_from_coder = False
 
         raise SwitchCoder(
@@ -1176,6 +1180,26 @@ class Commands:
     def cmd_context(self, args):
         """Enter context mode to see surrounding code context. If no prompt provided, switches to context mode."""  # noqa
         return self._generic_chat_command(args, "context", placeholder=args.strip() or None)
+
+    def cmd_refine(self, args):
+        """Create structured documents. If no prompt provided, switches to refine mode."""
+        from aider.coders.refine_coder import RefineCoder
+
+        coder = RefineCoder.create(
+            io=self.io,
+            from_coder=self.coder,
+            edit_format="refine",
+            summarize_from_coder=False,
+        )
+
+        user_msg = args
+        coder.run(user_msg)
+
+    def cmd_finalize(self, args):
+        """Generate the document according the final prompt from the refine command"""
+        if self.coder.edit_format == "refine" and hasattr(self.coder.gpt_prompts, 'main_final'):
+            return self._generic_chat_command(args + self.coder.gpt_prompts.main_final, self.coder.main_model.edit_format)
+        return None
 
     def _generic_chat_command(self, args, edit_format, placeholder=None):
         if not args.strip():
