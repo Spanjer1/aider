@@ -14,6 +14,7 @@ from prompt_toolkit.completion import Completion, PathCompleter
 from prompt_toolkit.document import Document
 
 from aider import models, prompts, voice
+from aider.coders.refine_prompts import RefinePrompts
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
 from aider.help import Help, install_help_extra
@@ -48,6 +49,7 @@ class Commands:
             verbose=self.verbose,
             editor=self.editor,
             original_read_only_fnames=self.original_read_only_fnames,
+            refine_prompts=self.refine_prompts,
         )
 
     def __init__(
@@ -63,7 +65,12 @@ class Commands:
         verbose=False,
         editor=None,
         original_read_only_fnames=None,
+        refine_prompts=None
     ):
+        if refine_prompts is None:
+            self.refine_prompts = {}
+        else:
+            self.refine_prompts = refine_prompts
         self.io = io
         self.coder = coder
         self.parser = parser
@@ -83,6 +90,8 @@ class Commands:
 
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
+
+
 
     def cmd_model(self, args):
         "Switch the Main Model to a new LLM"
@@ -1185,15 +1194,29 @@ class Commands:
         """Create structured documents. If no prompt provided, switches to refine mode."""
         from aider.coders.refine_coder import RefineCoder
 
+        prompt = self.refine_prompts.get(args, None)
+        if not prompt:
+            self.io.tool_error(f"{args} not found in prompts, Prompts that are available: {list(self.refine_prompts.keys())}")
+            return
+
         coder = RefineCoder.create(
             io=self.io,
             from_coder=self.coder,
             edit_format="refine",
             summarize_from_coder=False,
+            gpt_prompts= RefinePrompts(prompt['system'], prompt['final'])
         )
 
-        user_msg = args
-        coder.run(user_msg)
+        coder.run()
+
+        # Use the provided placeholder if any
+        raise SwitchCoder(
+            edit_format=self.coder.edit_format,
+            summarize_from_coder=False,
+            from_coder=coder,
+            show_announcements=False,
+            placeholder=None,
+        )
 
     def cmd_finalize(self, args):
         """Generate the document according the final prompt from the refine command"""

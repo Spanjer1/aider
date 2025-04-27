@@ -7,6 +7,7 @@ import traceback
 import webbrowser
 from dataclasses import fields
 from pathlib import Path
+import yaml
 
 try:
     import git
@@ -39,6 +40,22 @@ from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
 
+
+def load_yaml_files(refine_prompt_path):
+    yaml_data = {}
+    try:
+        path = Path(refine_prompt_path)
+        for yaml_file in path.glob("*.yaml"):
+            try:
+                with open(yaml_file, 'r') as file:
+                    data = yaml.safe_load(file)
+                    if all(key in data for key in ['name', 'system', 'final']):
+                        yaml_data[data['name']] = data
+            except Exception as e:
+                print(f"Failed to load {yaml_file}: {e}")
+    except Exception as e:
+        print(f"Error accessing path {refine_prompt_path}: {e}")
+    return yaml_data
 
 def check_config_files_for_yes(config_files):
     found = False
@@ -927,6 +944,10 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     else:
         analytics.event("no-repo")
 
+    refine_prompts = {}
+    if args.refine_prompt_path:
+        refine_prompts=load_yaml_files(args.refine_prompt_path)
+
     commands = Commands(
         io,
         None,
@@ -939,6 +960,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         verbose=args.verbose,
         editor=args.editor,
         original_read_only_fnames=read_only_fnames,
+        refine_prompts=refine_prompts,
     )
 
     summarizer = ChatSummary(

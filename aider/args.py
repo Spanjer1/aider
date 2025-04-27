@@ -837,6 +837,11 @@ def get_parser(default_config_files, git_root):
         help="Specify which editor to use for the /editor command",
     )
 
+    group.add_argument(
+        "--refine-prompt-path",
+        help="Specify the path for custom prompts (default: prompts)",
+    )
+
     supported_shells_list = sorted(list(shtab.SUPPORTED_SHELLS))
     group.add_argument(
         "--shell-completions",

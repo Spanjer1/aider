@@ -129,9 +129,13 @@ class Coder:
         io=None,
         from_coder=None,
         summarize_from_coder=True,
+        gpt_prompts=None,
         **kwargs,
     ):
         import aider.coders as coders
+
+        if not hasattr(self, "gpt_prompts") and gpt_prompts:
+            self.gpt_prompts = gpt_prompts
 
         if not main_model:
             if from_coder:
@@ -337,7 +341,7 @@ class Coder:
         total_tokens_received=0,
         file_watcher=None,
         auto_copy_context=False,
-        auto_accept_architect=True,
+        auto_accept_architect=True
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -376,6 +380,8 @@ class Coder:
             self.aider_commit_hashes = aider_commit_hashes
         else:
             self.aider_commit_hashes = set()
+
+
 
         self.chat_completion_call_hashes = []
         self.chat_completion_response_hashes = []
