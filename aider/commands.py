@@ -1219,9 +1219,30 @@ class Commands:
         )
 
     def cmd_finalize(self, args):
-        """Generate the document according the final prompt from the refine command"""
+        """Generate the document according the final prompt from the refine command and save to file"""
         if self.coder.edit_format == "refine" and hasattr(self.coder.gpt_prompts, 'main_final'):
-            return self._generic_chat_command(args + self.coder.gpt_prompts.main_final, self.coder.main_model.edit_format)
+            from aider.coders.base_coder import Coder
+
+            coder = Coder.create(
+                io=self.io,
+                from_coder=self.coder,
+                edit_format="ask",
+                summarize_from_coder=False,
+            )
+
+            user_msg = args + self.coder.gpt_prompts.main_final
+            output = coder.run(user_msg, preproc=False)
+
+            # If no filename is provided, use a default
+            filename = args.strip() if args.strip() else "output.md"
+            
+            try:
+                with open(filename, 'w', encoding=self.io.encoding) as f:
+                    f.write(output)
+                self.io.tool_output(f"Document saved to {filename}")
+            except Exception as e:
+                self.io.tool_error(f"Error saving document to {filename}: {e}")
+
         return None
 
     def _generic_chat_command(self, args, edit_format, placeholder=None):
