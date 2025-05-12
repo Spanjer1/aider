@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -9,6 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "aider-chat"
+version = "0.1.dev12737+g75ccfeb.d20250512"
 source = { editable = "." }
 dependencies = [
     { name = "aiohappyeyeballs" },
@@ -619,7 +619,6 @@ requires-dist = [
     { name = "yarl", marker = "extra == 'help'", specifier = "==1.20.0" },
     { name = "zipp", specifier = "==3.21.0" },
 ]
-provides-extras = ["dev", "help", "browser", "playwright"]
 
 [[package]]
 name = "aiohappyeyeballs"

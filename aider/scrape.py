@@ -148,15 +148,19 @@ class Scraper:
 
         with sync_playwright() as p:
             try:
-                browser = p.chromium.launch()
+                browser = p.chromium.launch_persistent_context(
+                   channel='msedge',
+                    headless=False,
+                    user_data_dir="C:\\tools\\aider\\UserData",
+                    args=["--profile-directory=Default"]  # Update this to your desired profile
+                )
             except Exception as e:
                 self.playwright_available = False
                 self.print_error(str(e))
                 return None, None
 
             try:
-                context = browser.new_context(ignore_https_errors=not self.verify_ssl)
-                page = context.new_page()
+                page = browser.new_page()
 
                 user_agent = page.evaluate("navigator.userAgent")
                 user_agent = user_agent.replace("Headless", "")
@@ -167,7 +171,7 @@ class Scraper:
 
                 response = None
                 try:
-                    response = page.goto(url, wait_until="networkidle", timeout=5000)
+                    response = page.goto(url, wait_until="networkidle", timeout=30000)
                 except PlaywrightTimeoutError:
                     print(f"Page didn't quiesce, scraping content anyway: {url}")
                     response = None
