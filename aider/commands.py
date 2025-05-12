@@ -1232,9 +1232,9 @@ class Commands:
 
             user_msg = args + self.coder.gpt_prompts.main_final
             max_tokens = coder.main_model.extra_params["max_tokens"]
-            coder.main_model.extra_params = {**self.coder.extra_params, **{"max_tokens": 5000}}
+            coder.main_model.extra_params = {**self.coder.main_model.extra_params, **{"max_tokens": 5000}}
             output = coder.run(user_msg, preproc=False)
-            coder.main_model.extra_params = {**self.coder.extra_params, **{"max_tokens": max_tokens}}
+            coder.main_model.extra_params = {**self.coder.main_model.extra_params, **{"max_tokens": max_tokens}}
             # If no filename is provided, use a default
             filename = args.strip() if args.strip() else "output.md"
             
