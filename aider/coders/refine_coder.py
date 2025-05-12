@@ -7,4 +7,5 @@ class RefineCoder(Coder):
 
     edit_format = "refine"
     repo_map = None
+    use_repo_map = False
     suggest_shell_commands = False
