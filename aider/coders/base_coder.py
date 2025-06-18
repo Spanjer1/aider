@@ -407,7 +407,6 @@ class Coder:
             self.done_messages = done_messages
         else:
             self.done_messages = []
-
         self.io = io
 
         self.shell_commands = []

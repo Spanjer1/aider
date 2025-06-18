@@ -2197,3 +2197,42 @@ class TestCommands(TestCase):
             )
             self.assertEqual(new_coder.done_messages, [{"role": "user", "content": "d1"}])
             self.assertEqual(new_coder.cur_messages, [{"role": "user", "content": "c1"}])
+
+    def test_save_state_completion_no_crash(self):
+        """Test that save-state command completion doesn't crash when typing arguments"""
+        from prompt_toolkit.completion import CompleteEvent
+        from prompt_toolkit.document import Document
+        from aider.io import AutoCompleter
+
+        with GitTemporaryDirectory():
+            # Initialize the Commands and InputOutput objects
+            io = InputOutput(pretty=False, fancy_input=False, yes=True)
+            coder = Coder.create(self.GPT35, None, io)
+            commands = Commands(io, coder)
+
+            # Create test files
+            Path("test1.txt").write_text("test content 1")
+            Path("test2.txt").write_text("test content 2")
+
+            # Create autocompleter
+            autocompleter = AutoCompleter(
+                root=".",
+                rel_fnames=["test1.txt", "test2.txt"],
+                addable_rel_fnames=[],
+                commands=commands,
+                encoding="utf-8"
+            )
+
+            # Test save-state completion with partial argument - should not crash
+            document = Document(text="/save-state my_state_file", cursor_position=len("/save-state my_state_file"))
+            complete_event = CompleteEvent()
+            
+            # This should not raise an exception about Completion objects not having 'lower' method
+            try:
+                completions = list(autocompleter.get_completions(document, complete_event))
+                # Should complete without error, regardless of what completions are returned
+            except AttributeError as e:
+                if "'Completion' object has no attribute 'lower'" in str(e):
+                    self.fail("Completion system crashed with Completion object .lower() error")
+                else:
+                    raise
