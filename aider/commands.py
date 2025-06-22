@@ -1223,22 +1223,27 @@ class Commands:
         if self.coder.edit_format == "refine" and hasattr(self.coder.gpt_prompts, 'main_final'):
             from aider.coders.base_coder import Coder
 
+            # Create a minimal coder without repo context, similar to RefineCoder
             coder = Coder.create(
                 io=self.io,
-                from_coder=self.coder,
+                main_model=self.coder.main_model,
                 edit_format="ask",
                 summarize_from_coder=False,
+                # Copy only the conversation history, not repo context
+                cur_messages=self.coder.cur_messages.copy(),
+                done_messages=self.coder.done_messages.copy(),
             )
+            
+            # Disable repo-related features like RefineCoder
+            coder.repo_map = None
+            coder.use_repo_map = False
+            coder.suggest_shell_commands = False
+            coder.abs_fnames = set()
+            coder.abs_read_only_fnames = set()
 
             user_msg = args + self.coder.gpt_prompts.main_final
-            if not self.coder.main_model.extra_params:
-                self.coder.main_model.extra_params = {}
-
-            max_tokens = coder.main_model.extra_params.get("max_tokens", None)
-
-            coder.main_model.extra_params = {**self.coder.main_model.extra_params, **{"max_tokens": 5000}}
+            
             output = coder.run(user_msg, preproc=False)
-            coder.main_model.extra_params = {**self.coder.main_model.extra_params, **{"max_tokens": max_tokens}}
             # If no filename is provided, use a default
             filename = args.strip() if args.strip() else "output.md"
             
@@ -1559,7 +1564,7 @@ class Commands:
             self.io.tool_error(f"Error saving commands to file: {e}")
 
     def cmd_save_state(self, args):
-        "Save complete session state including chat history and settings"
+        "Save LLM chat history to a file"
         if not args.strip():
             self.io.tool_error("Please provide a filename to save the state to.")
             return
@@ -1567,53 +1572,23 @@ class Commands:
         try:
             import json
             
-            # Collect all serializable state
+            # Only save LLM chat history
             state = {
-                # File context
-                "abs_fnames": list(self.coder.abs_fnames) if self.coder.abs_fnames else [],
-                "abs_read_only_fnames": list(self.coder.abs_read_only_fnames) if self.coder.abs_read_only_fnames else [],
-                # Chat messages
                 "cur_messages": self.coder.cur_messages,
                 "done_messages": self.coder.done_messages,
-                
-                # Git and commit info
-                "aider_commit_hashes": list(self.coder.aider_commit_hashes) if self.coder.aider_commit_hashes else [],
-                "last_aider_commit_hash": self.coder.last_aider_commit_hash,
-                
-                # Cost and token tracking
-                "total_cost": self.coder.total_cost,
-                "total_tokens_sent": getattr(self.coder, 'total_tokens_sent', 0),
-                "total_tokens_received": getattr(self.coder, 'total_tokens_received', 0),
-                
-                # Model and settings
-                "main_model": self.coder.main_model.name if self.coder.main_model else None,
-                "edit_format": self.coder.edit_format,
-                "auto_lint": getattr(self.coder, 'auto_lint', True),
-                "auto_test": getattr(self.coder, 'auto_test', False),
-                "test_cmd": getattr(self.coder, 'test_cmd', None),
-                "suggest_shell_commands": getattr(self.coder, 'suggest_shell_commands', True),
-                "detect_urls": getattr(self.coder, 'detect_urls', True),
-                "chat_language": getattr(self.coder, 'chat_language', None),
-                "commit_language": getattr(self.coder, 'commit_language', None),
-                
-                # Other state
-                "ignore_mentions": list(self.coder.ignore_mentions) if self.coder.ignore_mentions else [],
-                "root": str(self.coder.root) if hasattr(self.coder, 'root') else None,
-                
-                # Metadata
                 "saved_at": __import__('time').time(),
-                "aider_version": "fork"  # Mark as coming from fork
+                "aider_version": "fork"
             }
             
             with open(args.strip(), "w", encoding=self.io.encoding) as f:
                 json.dump(state, f, indent=2, ensure_ascii=False)
                 
-            self.io.tool_output(f"Saved complete session state to {args.strip()}")
+            self.io.tool_output(f"Saved LLM chat history to {args.strip()}")
         except Exception as e:
             self.io.tool_error(f"Error saving state to file: {e}")
 
     def cmd_load_state(self, args):
-        "Load complete session state including chat history and settings"
+        "Load LLM chat history from a file"
         if not args.strip():
             self.io.tool_error("Please provide a filename to load the state from.")
             return
@@ -1634,85 +1609,22 @@ class Commands:
                 self.io.tool_error("Invalid state file format.")
                 return
             
-            # Clear current state first
+            # Clear current chat history
             self.coder.cur_messages = []
             self.coder.done_messages = []
-            if hasattr(self.coder, 'abs_fnames'):
-                self.coder.abs_fnames.clear()
-            if hasattr(self.coder, 'abs_read_only_fnames'):
-                self.coder.abs_read_only_fnames.clear()
             
-            # Restore file context
-            if state.get("abs_fnames"):
-                if not hasattr(self.coder, 'abs_fnames'):
-                    self.coder.abs_fnames = set()
-                for fname in state["abs_fnames"]:
-                    if Path(fname).exists():
-                        self.coder.abs_fnames.add(fname)
-                    else:
-                        self.io.tool_warning(f"File no longer exists: {fname}")
-            
-            if state.get("abs_read_only_fnames"):
-                if not hasattr(self.coder, 'abs_read_only_fnames'):
-                    self.coder.abs_read_only_fnames = set()
-                for fname in state["abs_read_only_fnames"]:
-                    if Path(fname).exists():
-                        self.coder.abs_read_only_fnames.add(fname)
-                    else:
-                        self.io.tool_warning(f"Read-only file no longer exists: {fname}")
-            
-            # Restore chat messages
+            # Restore only chat messages
             if state.get("cur_messages"):
                 self.coder.cur_messages = state["cur_messages"]
             if state.get("done_messages"):
                 self.coder.done_messages = state["done_messages"]
             
-            # Restore git and commit info
-            if state.get("aider_commit_hashes"):
-                self.coder.aider_commit_hashes = set(state["aider_commit_hashes"])
-            if state.get("last_aider_commit_hash"):
-                self.coder.last_aider_commit_hash = state["last_aider_commit_hash"]
-            
-            # Restore cost and token tracking
-            if "total_cost" in state:
-                self.coder.total_cost = state["total_cost"]
-            if "total_tokens_sent" in state:
-                self.coder.total_tokens_sent = state["total_tokens_sent"]
-            if "total_tokens_received" in state:
-                self.coder.total_tokens_received = state["total_tokens_received"]
-            
-            # Restore settings
-            if "auto_lint" in state:
-                self.coder.auto_lint = state["auto_lint"]
-            if "auto_test" in state:
-                self.coder.auto_test = state["auto_test"]
-            if "test_cmd" in state:
-                self.coder.test_cmd = state["test_cmd"]
-            if "suggest_shell_commands" in state:
-                self.coder.suggest_shell_commands = state["suggest_shell_commands"]
-            if "detect_urls" in state:
-                self.coder.detect_urls = state["detect_urls"]
-            if "chat_language" in state:
-                self.coder.chat_language = state["chat_language"]
-            if "commit_language" in state:
-                self.coder.commit_language = state["commit_language"]
-            
-            # Restore other state
-            if state.get("ignore_mentions"):
-                self.coder.ignore_mentions = set(state["ignore_mentions"])
-            
-            # Update repo map if needed
-            if hasattr(self.coder, 'repo_map') and self.coder.repo_map:
-                self.coder.repo_map.refresh()
-            
             saved_time = __import__('time').ctime(state["saved_at"])
-            self.io.tool_output(f"Loaded session state from {args.strip()} (saved: {saved_time})")
+            self.io.tool_output(f"Loaded LLM chat history from {args.strip()} (saved: {saved_time})")
             
             # Show summary
-            num_files = len(state.get("abs_fnames", []))
-            num_ro_files = len(state.get("abs_read_only_fnames", []))
             num_messages = len(state.get("cur_messages", [])) + len(state.get("done_messages", []))
-            self.io.tool_output(f"Restored {num_files} files, {num_ro_files} read-only files, {num_messages} messages")
+            self.io.tool_output(f"Restored {num_messages} messages")
             
         except Exception as e:
             self.io.tool_error(f"Error loading state from file: {e}")
