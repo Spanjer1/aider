@@ -11,6 +11,8 @@ from aider.dump import dump  # noqa: F401
 from aider.waiting import Spinner
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp", ".pdf"}
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".wma"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
 
 
 class IgnorantTemporaryDirectory:
@@ -91,6 +93,28 @@ def is_image_file(file_name):
     """
     file_name = str(file_name)  # Convert file_name to string
     return any(file_name.endswith(ext) for ext in IMAGE_EXTENSIONS)
+
+
+def is_audio_file(file_name):
+    """
+    Check if the given file name has an audio file extension.
+
+    :param file_name: The name of the file to check.
+    :return: True if the file is an audio file, False otherwise.
+    """
+    file_name = str(file_name).lower()
+    return any(file_name.endswith(ext) for ext in AUDIO_EXTENSIONS)
+
+
+def is_video_file(file_name):
+    """
+    Check if the given file name has a video file extension.
+
+    :param file_name: The name of the file to check.
+    :return: True if the file is a video file, False otherwise.
+    """
+    file_name = str(file_name).lower()
+    return any(file_name.endswith(ext) for ext in VIDEO_EXTENSIONS)
 
 
 def safe_abs_path(res):

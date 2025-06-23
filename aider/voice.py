@@ -11,6 +11,13 @@ from aider.llm import litellm
 
 from .dump import dump  # noqa: F401
 
+try:
+    import whisper
+    LOCAL_WHISPER_AVAILABLE = True
+except ImportError:
+    LOCAL_WHISPER_AVAILABLE = False
+    whisper = None
+
 warnings.filterwarnings(
     "ignore", message="Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work"
 )
@@ -73,6 +80,53 @@ class Voice:
         if audio_format not in ["wav", "mp3", "webm"]:
             raise ValueError(f"Unsupported audio format: {audio_format}")
         self.audio_format = audio_format
+        
+        # Initialize local whisper model if available
+        self.local_model = None
+        if LOCAL_WHISPER_AVAILABLE:
+            try:
+                print("Loading local Whisper small model...")
+                self.local_model = whisper.load_model("small")
+                print("Local Whisper model loaded successfully!")
+            except Exception as e:
+                print(f"Failed to load local Whisper model: {e}")
+                self.local_model = None
+
+    def transcribe_local(self, filename, language="en", history=""):
+        """Transcribe audio using local Whisper model."""
+        if not self.local_model:
+            return None
+            
+        try:
+            print("Transcribing with local Whisper...")
+            # Check if file exists
+            if not os.path.exists(filename):
+                print(f"Audio file not found: {filename}")
+                return None
+            
+            # Get file size for debugging
+            file_size = os.path.getsize(filename)
+            print(f"Audio file: {filename} ({file_size} bytes)")
+            
+            result = self.local_model.transcribe(filename, language=language)
+            text = result["text"].strip()
+            print(f"Transcribed: {text}")
+            return text
+        except FileNotFoundError as e:
+            if "ffmpeg" in str(e) or "[WinError 2]" in str(e):
+                print("FFmpeg not found in PATH. Please install FFmpeg:")
+                print("  Windows: choco install ffmpeg  OR  winget install ffmpeg")
+                print("  macOS: brew install ffmpeg")
+                print("  Linux: sudo apt install ffmpeg")
+                return None
+            else:
+                print(f"File not found error: {e}")
+                return None
+        except Exception as e:
+            print(f"Local transcription failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def callback(self, indata, frames, time, status):
         """This is called (from a separate thread) for each audio block."""
@@ -164,19 +218,29 @@ class Voice:
             except Exception as e:
                 print(f"Unexpected error during audio conversion: {e}")
 
-        with open(filename, "rb") as fh:
-            try:
-                transcript = litellm.transcription(
-                    model="whisper-1", file=fh, prompt=history, language=language
-                )
-            except Exception as err:
-                print(f"Unable to transcribe {filename}: {err}")
-                return
+        # Try local transcription first, fallback to remote only if no local model
+        text = None
+        if self.local_model:
+            text = self.transcribe_local(filename, language=language, history=history)
+            if not text:
+                print("Local transcription returned empty result")
+        else:
+            print("No local model available, using remote transcription")
+            # Fallback to remote transcription only if no local model
+            with open(filename, "rb") as fh:
+                try:
+                    transcript = litellm.transcription(
+                        model="whisper-1", file=fh, prompt=history, language=language
+                    )
+                    text = transcript.text
+                except Exception as err:
+                    print(f"Unable to transcribe {filename}: {err}")
+                    if filename != temp_wav:
+                        os.remove(filename)
+                    return
 
         if filename != temp_wav:
             os.remove(filename)
-
-        text = transcript.text
         return text
 
 

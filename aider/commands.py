@@ -1306,8 +1306,10 @@ class Commands:
         "Record and transcribe voice input"
 
         if not self.voice:
-            if "OPENAI_API_KEY" not in os.environ:
-                self.io.tool_error("To use /voice you must provide an OpenAI API key.")
+            # Check if local Whisper is available first
+            from . import voice as voice_module
+            if not voice_module.LOCAL_WHISPER_AVAILABLE and "OPENAI_API_KEY" not in os.environ:
+                self.io.tool_error("To use /voice you must either have local Whisper installed or provide an OpenAI API key.")
                 return
             try:
                 self.voice = voice.Voice(
@@ -1327,6 +1329,207 @@ class Commands:
 
         if text:
             self.io.placeholder = text
+
+    def cmd_transcribe(self, args):
+        """Transcribe audio or video files using local Whisper model"""
+        if not args.strip():
+            self.io.tool_error("Please provide an audio or video file path")
+            return
+            
+        file_path = args.strip()
+        if not os.path.exists(file_path):
+            self.io.tool_error(f"File not found: {file_path}")
+            return
+            
+        from .utils import is_audio_file, is_video_file
+        
+        if not (is_audio_file(file_path) or is_video_file(file_path)):
+            self.io.tool_error("File must be an audio or video file")
+            return
+            
+        # Get absolute path for consistent caching
+        file_path = os.path.abspath(file_path)
+        
+        # Create cache directory
+        cache_dir = os.path.join(os.path.expanduser("~"), ".aider", "transcripts")
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Generate cache key based on file path and modification time
+        import hashlib
+        file_stat = os.stat(file_path)
+        cache_key = hashlib.md5(f"{file_path}_{file_stat.st_mtime}_{file_stat.st_size}".encode()).hexdigest()
+        
+        # Create transcript filename
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        transcript_file = os.path.join(cache_dir, f"{base_name}_{cache_key[:8]}.txt")
+        
+        # Check if transcript already exists
+        if os.path.exists(transcript_file):
+            self.io.tool_output(f"Using cached transcript: {transcript_file}")
+            with open(transcript_file, 'r', encoding='utf-8') as f:
+                text = f.read().strip()
+            
+            # Add transcript file as read-only to chat
+            abs_path = self.coder.abs_root_path(transcript_file)
+            self.coder.abs_read_only_fnames.add(abs_path)
+            rel_fname = self.coder.get_rel_fname(abs_path)
+            self.io.tool_output(f"Added {rel_fname} as read-only file to chat")
+            return
+            
+        if not self.voice:
+            # Check if local Whisper is available
+            from . import voice as voice_module
+            if not voice_module.LOCAL_WHISPER_AVAILABLE:
+                self.io.tool_error("Local Whisper not available. Please install openai-whisper")
+                return
+            try:
+                self.voice = voice.Voice(audio_format="wav")
+            except voice.SoundDeviceError:
+                # For transcription, we don't need sound device
+                pass
+                
+        # Create a temporary Voice instance just for transcription if needed
+        if not hasattr(self.voice, 'local_model') or not self.voice.local_model:
+            try:
+                import whisper
+                print("Loading Whisper model for transcription...")
+                temp_model = whisper.load_model("small")
+            except Exception as e:
+                self.io.tool_error(f"Failed to load Whisper model: {e}")
+                return
+        else:
+            temp_model = self.voice.local_model
+            
+        try:
+            import time
+            import threading
+            from .waiting import Spinner
+            
+            # Get file duration for progress estimation
+            def get_media_duration(file_path):
+                try:
+                    import subprocess
+                    result = subprocess.run([
+                        'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+                        '-of', 'csv=p=0', file_path
+                    ], capture_output=True, text=True, check=True)
+                    return float(result.stdout.strip())
+                except:
+                    # Fallback: estimate based on file size (rough approximation)
+                    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    return file_size_mb * 10  # Very rough estimate: 10 seconds per MB
+            
+            # Progress bar simulation
+            def show_progress(duration_seconds, operation_name="Transcribing"):
+                # Estimate transcription time: roughly 1/3 of audio duration for small model
+                estimated_time = max(5, duration_seconds / 3)
+                
+                start_time = time.time()
+                progress_chars = "▁▂▃▄▅▆▇█"
+                
+                while not progress_done:
+                    elapsed = time.time() - start_time
+                    progress = min(elapsed / estimated_time, 0.95)  # Cap at 95% until done
+                    
+                    bar_width = 30
+                    filled_width = int(bar_width * progress)
+                    bar = "█" * filled_width + "░" * (bar_width - filled_width)
+                    
+                    elapsed_str = f"{elapsed:.1f}s"
+                    if progress < 0.95:
+                        remaining = estimated_time - elapsed
+                        eta_str = f" ETA: {remaining:.1f}s"
+                    else:
+                        eta_str = " (almost done...)"
+                    
+                    print(f"\r{operation_name}: [{bar}] {progress*100:.1f}% {elapsed_str}{eta_str}", end="", flush=True)
+                    time.sleep(0.5)
+                
+                # Final progress
+                print(f"\r{operation_name}: [{'█'*bar_width}] 100% Complete!{' '*20}")
+            
+            # Get duration
+            duration = get_media_duration(file_path)
+            
+            # Start progress tracking
+            progress_done = False
+            progress_thread = threading.Thread(target=show_progress, args=(duration, "Transcribing"))
+            progress_thread.daemon = True
+            progress_thread.start()
+            
+            try:
+                # Handle video files by extracting audio first
+                if is_video_file(file_path):
+                    import tempfile
+                    import subprocess
+                    
+                    # Extract audio from video using ffmpeg
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+                        temp_audio_path = temp_audio.name
+                        
+                    try:
+                        subprocess.run([
+                            'ffmpeg', '-i', file_path, '-vn', '-acodec', 'pcm_s16le', 
+                            '-ar', '16000', '-ac', '1', temp_audio_path, '-y'
+                        ], check=True, capture_output=True)
+                        
+                        # Transcribe the extracted audio
+                        result = temp_model.transcribe(temp_audio_path, language=self.voice_language or "en")
+                        text = result["text"].strip()
+                        
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_audio_path):
+                            os.remove(temp_audio_path)
+                else:
+                    # Direct audio file transcription
+                    result = temp_model.transcribe(file_path, language=self.voice_language or "en")
+                    text = result["text"].strip()
+            finally:
+                # Stop progress bar
+                progress_done = True
+                progress_thread.join(timeout=1)
+                print()  # New line after progress bar
+                
+            if text:
+                # Save transcript to cache file
+                try:
+                    with open(transcript_file, 'w', encoding='utf-8') as f:
+                        # Write header with metadata
+                        f.write(f"# Transcript of: {os.path.basename(file_path)}\n")
+                        f.write(f"# Source file: {file_path}\n")
+                        f.write(f"# Transcribed: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"# Duration: {duration:.1f} seconds\n")
+                        f.write(f"# Model: Whisper small\n")
+                        f.write("\n" + "="*50 + "\n\n")
+                        f.write(text)
+                    
+                    self.io.tool_output(f"Transcript saved: {transcript_file}")
+                    
+                    # Add transcript file as read-only to chat
+                    abs_path = self.coder.abs_root_path(transcript_file)
+                    self.coder.abs_read_only_fnames.add(abs_path)
+                    rel_fname = self.coder.get_rel_fname(abs_path)
+                    self.io.tool_output(f"Added {rel_fname} as read-only file to chat")
+                    
+                except Exception as e:
+                    self.io.tool_error(f"Failed to save transcript: {e}")
+                    # Still show the transcript even if saving failed
+                    self.io.tool_output(f"Transcription of {file_path}:")
+                    self.io.tool_output(text)
+            else:
+                self.io.tool_output("No speech detected in the file")
+                
+        except FileNotFoundError as e:
+            if "ffmpeg" in str(e):
+                self.io.tool_error("FFmpeg not found. Please install FFmpeg to process video files:")
+                self.io.tool_error("  Windows: choco install ffmpeg  OR  winget install ffmpeg")
+                self.io.tool_error("  macOS: brew install ffmpeg")
+                self.io.tool_error("  Linux: sudo apt install ffmpeg")
+            else:
+                self.io.tool_error(f"File processing error: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Transcription failed: {e}")
 
     def cmd_paste(self, args):
         """Paste image/text from the clipboard into the chat.\
